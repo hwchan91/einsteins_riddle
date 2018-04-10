@@ -1,29 +1,21 @@
 require 'pry'
 require 'ostruct'
 
-class Node
-  attr_accessor :name, :greater_than, :less_than, :less_than_symbol, :greater_than_symbol
+# if for a comparasion, e.g. A & B, both/either nodes' unit is intially not known, and thus A & B belong to a sequence; when both nodes' become known, their sequence can be inferred from the unit, and thus teach other's node in their respective Sequence objects can be removed (for performance)
+class Sequence
+  attr_accessor :name, :greater_than, :less_than
 
-  def initialize(opt, comparison = OpenStruct.new(lesser: "<", greater: ">"))
-    @name = opt[:name]
+   # e.g. in a horizontal order arranged from left to right; 'is left of' represents :lesser, 'is right of' represents :greater
+  def initialize(opt = {})
+    @name         = opt[:name]
     @greater_than = []
-    @less_than = []
-    @less_than_symbol = comparison.lesser
-    @greater_than_symbol = comparison.greater
-  end
-
-  def relationship(symbol, is_front)
-    if symbol == less_than_symbol && is_front || symbol == greater_than_symbol && !is_front
-      @less_than
-    else
-      @greater_than
-    end
+    @less_than    = []
   end
 
   def inferred_comparison(comparison_direction)
     nodes = self.send(comparison_direction).dup
     nodes.each do |node|
-      nodes += node.send("inferred_#{comparison_direction}")
+      nodes += node.find_sequence(self.name).send("inferred_#{comparison_direction}")
     end
     nodes
   end
@@ -44,12 +36,13 @@ class Node
     inferred_less_than.map(&:name)
   end
 
+  #broken
   def unflattened_trails(comparison_direction, existing_trail = [])
     return existing_trail if send(comparison_direction).empty?
     send(comparison_direction).map do |node|
       new_trail = existing_trail.clone
       new_trail << node
-      node.unflattened_trails(comparison_direction, new_trail.clone)
+      node.find_sequence(self.name).unflattened_trails(comparison_direction, new_trail.clone)
     end
   end
 
@@ -84,8 +77,60 @@ class Node
   end
 end
 
+#can ignore this for now
+class Unit
+  attr_accessor :belongs_to_attribute, :name, :convertable_units
 
-class Sequence
+  def initialize(opt = {})
+    @belongs_to_attribute = opt[:attribute]
+    @name = opt[:unit] # eg. g
+    @convertable_units = {} # eg. lb, Kg
+  end
+end
+
+# attributes should be the MOST BASIC unit possible, e.g. to represent color, instead of coding rgby into the same attribute, it should be 4 different attributes; when the actual color is queried, the 4 attributes are then combined to return its original color
+class Attribute
+  attr_accessor :name, :units, :sequence
+
+  def initialize(opt = {})
+    @name = opt[:name] # the quality that it measures, e.g. 'cold-hot', 'left-right', 'numerical: small-large'
+    #contains units (that can convert between each other) & (a single?) sequence
+    @units = []
+    @sequence = Sequence.new(name: name)
+  end
+end
+
+
+class Node
+  attr_accessor :name, :attributes
+
+  def initialize(opt = {})
+    @name = opt[:name]
+    @attributes = []
+  end
+
+  def add_comparison(attribute_name:, relationship:, other_node:)
+    sequence = find_sequence(attribute_name)
+    sequence.send(relationship) << other_node # relationship: "less_than" OR "greater_than"
+  end
+
+  def find_or_add_attribute(attribute_name)
+    attribute = attributes.find{|a| a.name == attribute_name}
+    return attribute if attribute
+
+    new_attribute = Attribute.new(name: attribute_name)
+    @attributes << new_attribute
+    new_attribute
+  end
+
+  def find_sequence(attribute_name)
+    attribute = find_or_add_attribute(attribute_name)
+    sequence = attribute.sequence
+  end
+end
+
+
+class Field
   attr_accessor :nodes
 
   def initialize
@@ -101,7 +146,15 @@ class Sequence
 
     found_nodes.each_with_index do |node, index|
       is_front = index == 0
-      node.relationship(symbol, is_front) << other_node(found_nodes, is_front)
+      node.add_comparison(attribute_name: "numerical_value", relationship: relationship(symbol, is_front), other_node: other_node(found_nodes, is_front))
+    end
+  end
+
+  def relationship(symbol, is_front)
+    if symbol == '<' && is_front || symbol == '>' && !is_front
+      'less_than'
+    else
+      'greater_than'
     end
   end
 
@@ -113,32 +166,12 @@ class Sequence
     return @nodes[node_name] if @nodes[node_name]
     @nodes[node_name] = Node.new(name: node_name)
   end
-
-  def longest_path
-    longest_path_length = 0
-    nodes.each do |node|
-      # node.inferred_greater_than.count + node.inferred_greater_than.count
-    end
-  end
 end
 
-class GraphNode
-  attr_accessor :name, :space
-
-  def initialize(opt)
-    @name = opt[:name]
-    @space = 0
-  end
-end
-
-
-
-# class Graph
-
-# end
-s = Sequence.new
+s = Field.new
 s.parse('a<b')
 s.parse('a<c')
 s.parse('c<d')
 s.parse('c<e')
 a = s.nodes['a']
+a.attributes.find{|a| a.name == 'numerical_value'}.sequence.get_trails_less_than_names

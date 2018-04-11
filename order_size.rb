@@ -1,6 +1,8 @@
 require 'pry'
 require 'ostruct'
 
+# when making comparison return all associated nodes, by default, but should also have option to only return nodes included in a specific array, or scope
+
 # if for a comparasion, e.g. A & B, both/either nodes' unit is intially not known, and thus A & B belong to a sequence; when both nodes' become known, their sequence can be inferred from the unit, and thus teach other's node in their respective Sequence objects can be removed (for performance)
 class Sequence
   attr_accessor :name, :greater_than, :less_than
@@ -102,11 +104,13 @@ end
 
 
 class Node
-  attr_accessor :name, :attributes
+  attr_accessor :name, :attributes, :scope, :mother_node
 
   def initialize(opt = {})
-    @name = opt[:name]
-    @attributes = []
+    @name        = opt[:name]
+    @attributes  = []
+    @scope       = opt[:scope] || 'default'
+    @mother_node = opt[:node]
   end
 
   # TO DO: need to skip adding again if the relationship already exists
@@ -127,6 +131,26 @@ class Node
   def find_sequence(attribute_name)
     attribute = find_or_add_attribute(attribute_name)
     sequence = attribute.sequence
+  end
+
+  def self.all
+    ObjectSpace.each_object(self).to_a
+  end
+
+  def self.count
+    all.length
+  end
+
+  def self.find(name, scope = 'default')
+    self.all.find{|n| n.name == name && n.scope == scope }
+  end
+
+  def find_attr(attr_name)
+    attributes.find{|a| a.name == attr_name }
+  end
+
+  def find_seq(attr_name)
+    find_attr(attr_name).sequence
   end
 end
 
@@ -151,65 +175,67 @@ class BipolarComparison
     self.all.find{|c| [c.lesser, c.greater].include? symbol }
   end
 
-  def in_words(symbol, is_front)
-    if symbol == lesser && is_front || symbol == greater && !is_front
-      'less_than'
-    else
-      'greater_than'
-    end
+  def in_words(symbol)
+    symbol == lesser ? 'less_than' : 'greater_than'
+  end
+
+  def in_words_reversed(symbol)
+    symbol == lesser ? 'greater_than' : 'less_than'
   end
 end
 
-class Field
-  attr_accessor :nodes
 
-  def initialize
-    @nodes = {}
-  end
 
-  def parse(statement)
-    symbols = statement.split(" ")
-    comparison = nil
-    comparison_symbol = symbols.find{ |symbol| comparison = BipolarComparison.identify(symbol) }
-    found_nodes = node_names(symbols, comparison_symbol).map {|node_name| find_or_create_node(node_name) }
+# when parsing, should only select nodes that match on scope, when nodes are created, the scope is 'default' by default
+def parse(statement)
+  symbols = statement.split(" ")
+  comparison = nil
+  comparison_symbol = symbols.find{ |symbol| comparison = BipolarComparison.identify(symbol) }
+  first_node, second_node = node_names(symbols, comparison_symbol).map {|node_name| find_or_create_node(node_name) }
 
-    #check_if_valid (i.e. not: A<B, B<C, C<A)
+  #check_if_valid (i.e. not: A<B, B<C, C<A)
 
-    found_nodes.each_with_index do |node, index|
-      is_front = index == 0
-      node.add_comparison(attribute_name: comparison.name, relationship: comparison.in_words(comparison_symbol, is_front), other_node: other_node(found_nodes, is_front))
-    end
-  end
+  first_node.add_comparison(attribute_name: comparison.name, relationship: comparison.in_words(comparison_symbol), other_node: second_node)
+  second_node.add_comparison(attribute_name: comparison.name, relationship: comparison.in_words_reversed(comparison_symbol), other_node: first_node)
+end
 
-  # get the names immediately before and immediately after the comparison symbol
-  def node_names(symbols, comparison_symbol)
-    index = symbols.index(comparison_symbol)
-    [symbols[index-1], symbols[index +1] ]
-  end
+# get the names immediately before and immediately after the comparison symbol
+def node_names(symbols, comparison_symbol)
+  index = symbols.index(comparison_symbol)
+  [symbols[index-1], symbols[index +1] ]
+end
 
-  def other_node(found_nodes, is_front)
-    is_front ? found_nodes.last : found_nodes.first
-  end
-
-  def find_or_create_node(node_name)
-    return @nodes[node_name] if @nodes[node_name]
-    @nodes[node_name] = Node.new(name: node_name)
-  end
+def find_or_create_node(node_name, scope = 'default')
+  found_node = Node.all.find{|n| n.scope == scope && n.name == node_name }
+  return found_node if found_node
+  Node.new(name: node_name, scope: scope)
 end
 
 
 # predefine all comparisons that are used
 BipolarComparison.new(name: "numerical_value", lesser: "<", greater: ">")
+BipolarComparison.new(name: "height", lesser: "is_shorter_than", greater: "is_taller_than")
 
-s = Field.new
-s.parse('a < b')
-s.parse('a < c')
-s.parse('c < d')
-s.parse('c < e')
-s.parse('e < f')
-s.parse('e < g')
-s.parse('e < h')
-s.parse('b > i')
-s.parse('i < j')
-a = s.nodes['a']
-a.attributes.find{|a| a.name == 'numerical_value'}.sequence.get_trails_less_than_names
+parse('a < b')
+parse('a < c')
+parse('c < d')
+parse('c < e')
+parse('e < f')
+parse('e < g')
+parse('e < h')
+parse('b > i')
+parse('i < j')
+a = Node.find('a')
+a.find_seq('numerical_value').get_trails_less_than_names
+
+# parse('a is_shorter_than b')
+# parse('a is_shorter_than c')
+# parse('c is_shorter_than d')
+# parse('c is_shorter_than e')
+# parse('e is_shorter_than f')
+# parse('e is_shorter_than g')
+# parse('e is_shorter_than h')
+# parse('b is_taller_than i')
+# parse('i is_shorter_than j')
+# a = Node.find('a')
+# a.find_seq('height').get_trails_less_than_names
